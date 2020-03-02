@@ -231,7 +231,7 @@ def main():
 
     try:
       session = fetcher.login(username, password)
-    except MfaRequiredException:
+    except:
       otp = input("OTP: ")
       session = fetcher.login(username, password, otp)
 
