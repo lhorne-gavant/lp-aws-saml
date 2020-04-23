@@ -166,7 +166,11 @@ def prompt_for_role(roles):
 
 
 def aws_assume_role(assertion, role_arn, principal_arn):
-    client = boto3.client('sts')
+    client = boto3.client('sts',
+        aws_access_key_id="",
+        aws_secret_access_key="",
+        aws_session_token="",
+    )
     return client.assume_role_with_saml(
                 RoleArn=role_arn,
                 PrincipalArn=principal_arn,
