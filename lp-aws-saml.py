@@ -171,11 +171,29 @@ def aws_assume_role(assertion, role_arn, principal_arn):
         aws_secret_access_key="",
         aws_session_token="",
     )
-    return client.assume_role_with_saml(
+    short_creds = client.assume_role_with_saml(
                 RoleArn=role_arn,
                 PrincipalArn=principal_arn,
                 SAMLAssertion=b64encode(assertion).decode("utf-8"),
-                DurationSeconds=28800)
+                DurationSeconds=900)
+    credentials = short_creds['Credentials']
+    role_name = role_arn.rsplit('/', 1)[1]
+    iam = boto3.resource(
+        'iam',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken'],
+    )
+    try:
+        duration = iam.Role(role_name).max_session_duration
+    except:
+        return [short_creds,900]
+
+    return [client.assume_role_with_saml(
+                RoleArn=role_arn,
+                PrincipalArn=principal_arn,
+                SAMLAssertion=b64encode(assertion).decode("utf-8"),
+                DurationSeconds=duration) , duration ]
 
 
 def aws_set_profile(profile_name, response):
@@ -245,14 +263,14 @@ def main():
 
     role = prompt_for_role(roles)
     response = aws_assume_role(assertion, role[0], role[1])
-    aws_set_profile(profile_name, response)
+    aws_set_profile(profile_name, response[0])
 
     print ("A new AWS CLI profile '%s' has been added." % profile_name)
     print ("You may now invoke the aws CLI tool as follows:")
     print
     print ("    aws --profile %s [...] " % profile_name)
     print
-    print ("This token expires in 8 hours or less (depending on the role definition).")
+    print ("This profile is valid for %ds" % response[1] )
 
 
 if __name__ == "__main__":
