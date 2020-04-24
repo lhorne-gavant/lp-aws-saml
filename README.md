@@ -19,6 +19,8 @@ On recent Mac platforms, you may need to pass --ignore-installed:
     # pip3 install boto3 awscli requests lastpass-python  --ignore-installed
 ```
 
+Make sure you're using the correct pip3, there can be differences between the OS installed pip and what you install with hombrew. Check with ```which``` that python3 and pip3 are in the same directory.
+
 You will also need to have integrated AWS with LastPass SAML through the
 AWS and LastPass management consoles.  See the SAML setup instructions on the
 LastPass AWS configuration page for more information.
@@ -41,11 +43,10 @@ You may now invoke the aws CLI tool as follows:
 
     aws --profile user@example.com [...]
 
-This token expires in 8 hours or less.
+This token expires in 900s.
 ```
 
-The duration is dependent on the configuration of the role, if you set a duration of less than 8 hours, it will be less. If you're feeling helpful, maybe you could update this to query the max duration, use the max duration and then change the message appropriately.
+The duration is dependent on the configuration of the role, if you do not have permission to query the maximum session duration of the role you are using then 900s will be chosen. 
 
 Once completed, the ```aws``` tool may be used to execute commands as that
 user by specifying the appropriate profile.
-
