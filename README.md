@@ -37,7 +37,7 @@ Then launch the tool to login to lastpass.  You will be prompted for
 password and optionally the AWS role to assume:
 
 ```
-$ ./lp-aws-saml.py user@example.com
+$ ./lp-aws-saml.py user@example.com profile1
 Password:
 A new AWS CLI profile 'user@example.com' has been added.
 You may now invoke the aws CLI tool as follows:
