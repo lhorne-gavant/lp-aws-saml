@@ -35,6 +35,8 @@ from base64 import b64decode, b64encode
 from struct import pack
 import os
 import argparse
+import urllib
+import configuration
 
 import boto3
 from six.moves import input
@@ -54,8 +56,10 @@ PROXY_SERVER = 'https://127.0.0.1:8443'
 logging.basicConfig(level=logging.CRITICAL)
 logger = logging.getLogger('lp-aws-saml')
 
+
 class MfaRequiredException(Exception):
     pass
+
 
 def should_verify():
     """ Disable SSL validation only when debugging via proxy """
@@ -85,19 +89,7 @@ def extract_form(html):
     return form
 
 
-
-def get_saml_token(session, username, password, saml_cfg_id):
-    """
-    Log into LastPass and retrieve a SAML token for a given
-    SAML configuration.
-    """
-    logger.debug("Getting SAML token")
-
-    # now logged in, grab the SAML token from the IdP-initiated login
-    idp_login = '%s/saml/launch/cfg/%d' % (LASTPASS_SERVER, saml_cfg_id)
-
-    r = requests.get(idp_login,cookies={'PHPSESSID': session.id}, verify=should_verify())
-
+def get_saml_response_form(r, do_base64decode=True):
     form = extract_form(r.text)
     if not form['action']:
         # try to scrape the error message just to make it more user friendly
@@ -113,7 +105,58 @@ def get_saml_token(session, username, password, saml_cfg_id):
 
         raise ValueError("Unable to find SAML ACS" + error)
 
-    return b64decode(form['fields']['SAMLResponse'])
+    if do_base64decode:
+        return b64decode(form['fields']['SAMLResponse'])
+    return form['fields']['SAMLResponse']
+
+
+def get_intermediary_saml_response(session):
+    # TODO might need to call a second time if header has SAMLAuthToken?
+    # get SAMLAuthToken using PHPSESSID
+    # get intermediary SAMLResponse from
+    r = requests.get('https://lastpass.com/saml/launch/nopassword?RelayState=/',
+                     cookies={'PHPSESSID': session.id})
+    return get_saml_response_form(r, do_base64decode=False)
+
+
+def get_aspnetcore_cookies(session, intermediary_saml_response):
+    encoded_data = urllib.parse.urlencode(
+        {'SAMLResponse': intermediary_saml_response, 'RelayState': '/'})
+    r = requests.post('https://identity.lastpass.com/SAML/AssertionConsumerService',
+                      allow_redirects=False,
+                      data=encoded_data,
+                      headers={'Content-Type': 'application/x-www-form-urlencoded'})
+
+    cookie = r.cookies.get('.AspNetCore.Cookies')
+    if cookie is None:
+        raise Exception('.AspNetCore.Cookies was not found')
+    return cookie
+
+
+def get_saml_token(session, saml_cfg_id):
+    """
+    Log into LastPass and retrieve a SAML token for a given
+    SAML configuration.
+    """
+    logger.debug("Getting SAML token")
+
+    # get SAMLAuthToken using PHPSESSID
+    # get intermediary SAMLResponse from
+    intermediary_saml_response = get_intermediary_saml_response(session)
+
+    # get AspNetCore.Cookies using intermediary SAMLResponse form
+    aspnetcore_cookies = get_aspnetcore_cookies(
+        session, intermediary_saml_response)
+
+    # get SAMLResponse form token
+    idp_login = 'https://identity.lastpass.com/redirect?id=%s' % (saml_cfg_id)
+
+    r = requests.get(idp_login, cookies={
+        'PHPSESSID': session.id,
+        '.AspNetCore.Cookies': aspnetcore_cookies
+    },
+        verify=should_verify())
+    return get_saml_response_form(r)
 
 
 def get_saml_aws_roles(assertion):
@@ -149,10 +192,10 @@ def prompt_for_role(roles):
     if len(roles) == 1:
         return roles[0]
 
-    print ('Please select a role:')
+    print('Please select a role:')
     count = 1
     for r in roles:
-        print ('  %d) %s' % (count, r[0]))
+        print('  %d) %s' % (count, r[0]))
         count = count + 1
 
     choice = 0
@@ -167,15 +210,15 @@ def prompt_for_role(roles):
 
 def aws_assume_role(assertion, role_arn, principal_arn):
     client = boto3.client('sts',
-        aws_access_key_id="",
-        aws_secret_access_key="",
-        aws_session_token="",
-    )
+                          aws_access_key_id="",
+                          aws_secret_access_key="",
+                          aws_session_token="",
+                          )
     short_creds = client.assume_role_with_saml(
-                RoleArn=role_arn,
-                PrincipalArn=principal_arn,
-                SAMLAssertion=b64encode(assertion).decode("utf-8"),
-                DurationSeconds=900)
+        RoleArn=role_arn,
+        PrincipalArn=principal_arn,
+        SAMLAssertion=b64encode(assertion).decode("utf-8"),
+        DurationSeconds=900)
     credentials = short_creds['Credentials']
     role_name = role_arn.rsplit('/', 1)[1]
     iam = boto3.resource(
@@ -187,27 +230,27 @@ def aws_assume_role(assertion, role_arn, principal_arn):
     try:
         duration = iam.Role(role_name).max_session_duration
     except:
-        return [short_creds,900]
+        return [short_creds, 900]
 
     return [client.assume_role_with_saml(
-                RoleArn=role_arn,
-                PrincipalArn=principal_arn,
-                SAMLAssertion=b64encode(assertion).decode("utf-8"),
-                DurationSeconds=duration) , duration ]
+        RoleArn=role_arn,
+        PrincipalArn=principal_arn,
+        SAMLAssertion=b64encode(assertion).decode("utf-8"),
+        DurationSeconds=duration), duration]
 
 
-def aws_set_profile(profile_name, response):
+def aws_set_profile(profile, response):
     """
     Save AWS credentials returned from Assume Role operation in
     ~/.aws/credentials INI file.  The credentials are saved in
-    a profile with [profile_name].
+    a profile with [profile].
     """
     config_fn = os.path.expanduser("~/.aws/credentials")
 
     config = configparser.ConfigParser()
     config.read(config_fn)
 
-    section = profile_name
+    section = profile
     try:
         config.add_section(section)
     except configparser.DuplicateSectionError:
@@ -229,48 +272,43 @@ def aws_set_profile(profile_name, response):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Get temporary AWS access credentials using LastPass SAML Login')
+    parser = argparse.ArgumentParser(
+        description='Get temporary AWS access credentials using LastPass SAML Login')
     parser.add_argument('username', type=str,
-                    help='the lastpass username')
-    parser.add_argument('saml_config_id', type=int,
-                    help='the lastpass SAML config id')
-    parser.add_argument('--profile-name', dest='profile_name',
-                    help='the name of AWS profile to save the data in (default username)')
+                        help='the lastpass username')
+    parser.add_argument('profile', type=str,
+                        help='The lastpass SAML config profile name found in configuration.py')
 
     args = parser.parse_args()
 
     username = args.username
-    saml_cfg_id = args.saml_config_id
-
-    if args.profile_name is not None:
-        profile_name = args.profile_name
-    else:
-        profile_name = username
+    profile = args.profile
+    saml_cfg_id = configuration.profiles[profile]
 
     password = getpass()
 
     session = requests.Session()
 
     try:
-      session = fetcher.login(username, password)
+        session = fetcher.login(username, password)
     except:
-      otp = input("OTP: ")
-      session = fetcher.login(username, password, otp)
+        otp = input("OTP: ")
+        session = fetcher.login(username, password, otp)
 
-    assertion = get_saml_token(session, username, password, saml_cfg_id)
+    assertion = get_saml_token(session, saml_cfg_id)
     roles = get_saml_aws_roles(assertion)
     user = get_saml_nameid(assertion)
 
     role = prompt_for_role(roles)
     response = aws_assume_role(assertion, role[0], role[1])
-    aws_set_profile(profile_name, response[0])
+    aws_set_profile(profile, response[0])
 
-    print ("A new AWS CLI profile '%s' has been added." % profile_name)
-    print ("You may now invoke the aws CLI tool as follows:")
+    print("A new AWS CLI profile '%s' has been added." % profile)
+    print("You may now invoke the aws CLI tool as follows:")
     print
-    print ("    aws --profile %s [...] " % profile_name)
+    print("    aws --profile %s [...] " % profile)
     print
-    print ("This profile is valid for %ds" % response[1] )
+    print("This profile is valid for %ds" % response[1])
 
 
 if __name__ == "__main__":

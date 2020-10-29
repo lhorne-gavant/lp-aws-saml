@@ -2,7 +2,7 @@
 
 This repository contains the LastPass AWS SAML login tool. Compatible with Python3.
 
-If you are using LastPass Enterprise SAML with AWS, then please raise a ticket asking LastPass to merge my changes with their master branch.  
+If you are using LastPass Enterprise SAML with AWS, then please raise a ticket asking LastPass to merge my changes with their master branch.
 
 It retrieves a SAML assertion from LastPass and then converts it into credentials for use with ```aws```.
 
@@ -27,10 +27,11 @@ LastPass AWS configuration page for more information.
 
 ## Usage
 
-First you will need to look up the LastPass SAML configuration ID for the AWS
-instance you wish to control.  This can be obtained from the generated
-Launch URL: if the launch URL is ```https://lastpass.com/saml/launch/cfg/25```
-then the configuration ID is ```25```.
+First you will need to look up the LastPass SAML configuration IDs for the AWS
+instances you wish to control.  This can be obtained from your browsers developer tools when opening your "Cloud App".
+The request will look like ```https://identity.lastpass.com/redirect?id=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx```
+The configuration ID is ```xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx```.
+Update configuration.py with profile name and id.
 
 Then launch the tool to login to lastpass.  You will be prompted for
 password and optionally the AWS role to assume:
@@ -46,7 +47,7 @@ You may now invoke the aws CLI tool as follows:
 This token expires in 900s.
 ```
 
-The duration is dependent on the configuration of the role, if you do not have permission to query the maximum session duration of the role you are using then 900s will be chosen. 
+The duration is dependent on the configuration of the role, if you do not have permission to query the maximum session duration of the role you are using then 900s will be chosen.
 
 Once completed, the ```aws``` tool may be used to execute commands as that
 user by specifying the appropriate profile.
